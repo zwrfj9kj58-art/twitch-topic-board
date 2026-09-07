@@ -1050,8 +1050,6 @@
       return;
     }
 
-    if (isObsSource) return;
-
     let savedRoomId = localStorage.getItem('obs_remote_room_id');
     if (!savedRoomId) {
       savedRoomId = Math.random().toString(36).substring(2, 8);
@@ -1337,8 +1335,8 @@
   loadData();
   if (!isObsSource) {
     loadTwitchSettings();
-    initRemotePeer();
   }
+  initRemotePeer();
 </script>
 
 </body>
