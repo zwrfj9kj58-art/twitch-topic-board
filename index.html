@@ -1038,7 +1038,19 @@
   // --- スマホ遠隔リモコン (PeerJS P2P) 通信ロジック ---
   let remotePeer = null;
   let remoteConnections = [];
-  let hostPeerId = '';
+  let hostPeerConn = null;
+
+  function getRoomCode() {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('room')) return urlParams.get('room').trim();
+    
+    let saved = localStorage.getItem('obs_remote_room_id');
+    if (!saved) {
+      saved = 'topic-live';
+      localStorage.setItem('obs_remote_room_id', saved);
+    }
+    return saved;
+  }
 
   function initRemotePeer() {
     const urlParams = new URLSearchParams(window.location.search);
@@ -1050,24 +1062,20 @@
       return;
     }
 
-    let savedRoomId = localStorage.getItem('obs_remote_room_id');
-    if (!savedRoomId) {
-      savedRoomId = Math.random().toString(36).substring(2, 8);
-      localStorage.setItem('obs_remote_room_id', savedRoomId);
-    }
-    hostPeerId = 'tb-host-' + savedRoomId;
+    const roomCode = getRoomCode();
+    const targetHostId = 'tb-host-' + roomCode;
 
     try {
       if (typeof Peer === 'undefined') return;
 
-      remotePeer = new Peer(hostPeerId);
+      remotePeer = new Peer(targetHostId);
 
       remotePeer.on('open', (id) => {
         const peerIdElem = document.getElementById('peerIdDisplay');
-        if (peerIdElem) peerIdElem.innerText = savedRoomId;
+        if (peerIdElem) peerIdElem.innerText = roomCode;
 
         updateRemoteStatus('待機中 (接続準備完了)', 'dot-warning');
-        generateRemoteQRCode(id);
+        generateRemoteQRCode(targetHostId);
       });
 
       remotePeer.on('connection', (conn) => {
@@ -1093,16 +1101,43 @@
       });
 
       remotePeer.on('error', (err) => {
-        console.warn('PeerJS Host Error:', err);
         if (err.type === 'unavailable-id') {
-          savedRoomId = Math.random().toString(36).substring(2, 8);
-          localStorage.setItem('obs_remote_room_id', savedRoomId);
-          setTimeout(initRemotePeer, 1000);
+          connectAsClientToHost(targetHostId, roomCode);
         }
       });
     } catch (e) {
       console.error('PeerJS init error:', e);
     }
+  }
+
+  function connectAsClientToHost(hostId, roomCode) {
+    if (typeof Peer === 'undefined') return;
+    remotePeer = new Peer();
+
+    remotePeer.on('open', () => {
+      hostPeerConn = remotePeer.connect(hostId);
+
+      hostPeerConn.on('open', () => {
+        updateRemoteStatus('🟢 リモコン同期中', 'dot-success');
+        const peerIdElem = document.getElementById('peerIdDisplay');
+        if (peerIdElem) peerIdElem.innerText = roomCode;
+        generateRemoteQRCode(hostId);
+      });
+
+      hostPeerConn.on('data', (data) => {
+        if (data.type === 'STATE_UPDATE') {
+          topics = data.topics || [];
+          currentThemeId = data.currentThemeId || '';
+          if (data.boardConfig) boardConfig = data.boardConfig;
+          applyConfig();
+          renderLists();
+        }
+      });
+
+      hostPeerConn.on('close', () => {
+        updateRemoteStatus('待機中', 'dot-warning');
+      });
+    });
   }
 
   function updateRemoteStatus(text, dotClass) {
@@ -1166,6 +1201,9 @@
   }
 
   function broadcastStateToRemotes() {
+    if (hostPeerConn && hostPeerConn.open) {
+      return;
+    }
     if (!remoteConnections || remoteConnections.length === 0) return;
     const payload = {
       type: 'STATE_UPDATE',
